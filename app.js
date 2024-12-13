@@ -2,7 +2,7 @@
  * Copyright IBM Corp. All Rights Reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
- PART (A) */
+ */
 
 const grpc = require('@grpc/grpc-js');
 const { connect, hash, signers } = require('@hyperledger/fabric-gateway');
@@ -70,7 +70,7 @@ const utf8Decoder = new TextDecoder();
 const assetId = `asset${String(Date.now())}`;
 
 async function main() {
-
+    displayInputParameters();
 
     // The gRPC client connection should be shared by all Gateway connections to this endpoint.
     const client = await newGrpcConnection();
@@ -101,48 +101,53 @@ async function main() {
 
         // Get the smart contract from the network.
         const contract = network.getContract(chaincodeName);
-// Read user commands from the terminal
-const command = process.argv[2];
 
-switch (command) {
-    case 'ADD_MONEY':
-        const amount = parseFloat(process.argv[3]);
-        await addMoney(contract, amount);
-        break;
+        const args = process.argv.slice(2);
+    const command = args[0];
 
-    case 'ADD_DOC':
-        const docID = process.argv[3];
-        const docTitle = process.argv[4];
-        const docData = process.argv[5];
-        const price = parseFloat(process.argv[6]);
-        await addDocument(contract, docID, docTitle, docData, price);
-        break;
+    switch (command) {
+        case 'ENLIST_DOC':
+            const [docID, title, dataHash, data, price, seller] = args.slice(1);
+            await contract.submitTransaction('addDocumentToMarketplace', docID, title, dataHash, data, price, seller);
+            console.log(`Document ${docID} added to marketplace.`);
+            break;
 
-    case 'QUERY_BALANCE':
-        await queryBalance(contract);
-        break;
+        case 'WISHLIST':
+            const wishlistDocID = args[1];
+            wishlist.push(wishlistDocID);
+            console.log(`Document ${wishlistDocID} added to wishlist.`);
+            break;
 
-    case 'UPDATE_DOC_DATA':
-        const idToUpdate = process.argv[3];
-        const newDocData = process.argv[4];
-        const updateHash = process.argv[5] === 'true';
-        await updateDocument(contract, idToUpdate, newDocData, updateHash);
-        break;
+        case 'ALL_DOCS':
+            const allDocs = await contract.evaluateTransaction('getAllDocumentsInMarketplace');
+            console.log(`Marketplace documents: ${allDocs.toString()}`);
+            break;
 
-    case 'GET_ALL_DOCS':
-        await getAllDocuments(contract);
-        break;
+        case 'ALL_RECORDS':
+            const allRecords = await contract.evaluateTransaction('getAllPurchaseRecords');
+            console.log(`Purchase records: ${allRecords.toString()}`);
+            break;
 
-    case 'GET_DOC':
-        const docToGet = process.argv[3];
-        await getDocument(contract, docToGet);
-        break;
+        default:
+            console.log('Unknown command');
+    }
+    // Listen for DocumentAdded events
+    const listener = async (event) => {
+        if (event.eventName === 'DocumentAdded') {
+            const eventPayload = JSON.parse(event.payload.toString());
+            if (wishlist.includes(eventPayload.docID)) {
+                console.log(`Document ${eventPayload.docID} is in wishlist. Triggering purchase...`);
+                try {
+                    await contract.submitTransaction('buyDocument', eventPayload.docID, 'Org1User');
+                    console.log(`Purchased document ${eventPayload.docID} from marketplace.`);
+                } catch (err) {
+                    console.error(`Failed to purchase document ${eventPayload.docID}: ${err.message}`);
+                }
+            }
+        }
+    };
+    await network.addBlockListener(listener);
 
-    default:
-        console.log('Invalid command!');
-        break;
-}
-        
     } finally {
         gateway.close();
         client.close();
@@ -153,41 +158,4 @@ main().catch((error) => {
     console.error('******** FAILED to run the application:', error);
     process.exitCode = 1;
 });
-async function addMoney(contract, amount) {
-    const transientData = { amount: Buffer.from(amount.toString()) };
-    await contract.createTransaction('AddBalance').setTransient(transientData).submit();
-    console.log(`Added ${amount} to account balance.`);
-}
-
-async function addDocument(contract, docID, docTitle, docData, price) {
-    const transientData = {
-        docID: Buffer.from(docID),
-        docTitle: Buffer.from(docTitle),
-        docData: Buffer.from(docData),
-        price: Buffer.from(price.toString())
-    };
-    await contract.createTransaction('AddDocument').setTransient(transientData).submit();
-    console.log(`Added document ${docID}.`);
-}
-
-async function queryBalance(contract) {
-    const result = await contract.evaluateTransaction('GetBalance');
-    console.log(`Account balance: ${result.toString()}`);
-}
-
-async function updateDocument(contract, docID, newDocData, updateHash) {
-    const transientData = { newDocData: Buffer.from(newDocData) };
-    await contract.createTransaction('UpdateDocument').setTransient(transientData).submit(docID, newDocData, updateHash.toString());
-    console.log(`Updated document ${docID}.`);
-}
-
-async function getAllDocuments(contract) {
-    const result = await contract.evaluateTransaction('GetAllDocuments');
-    console.log(`Documents: ${result.toString()}`);
-}
-
-async function getDocument(contract, docID) {
-    const result = await contract.evaluateTransaction('GetDocument', docID);
-    console.log(`Document details: ${result.toString()}`);
-}
 
